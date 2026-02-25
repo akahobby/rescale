@@ -1,0 +1,14 @@
+﻿{
+    "native":  {
+                   "width":  2560,
+                   "height":  1440
+               },
+    "game":  {
+                 "width":  1280,
+                 "height":  880
+             },
+    "bitDepth":  32,
+    "secondaryDisplays":  [
+
+                          ]
+}
