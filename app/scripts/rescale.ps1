@@ -481,9 +481,15 @@ function Show-ConfigWindow {
             )
         }
         finally {
-            $btnSave.Enabled = $true
-            $form.UseWaitCursor = $false
-            $lblStatus.Text = 'Ready.'
+            if (-not $btnSave.IsDisposed) {
+                $btnSave.Enabled = $true
+            }
+            if (-not $form.IsDisposed) {
+                $form.UseWaitCursor = $false
+            }
+            if (-not $lblStatus.IsDisposed) {
+                $lblStatus.Text = 'Ready.'
+            }
         }
     })
 
