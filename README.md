@@ -62,6 +62,21 @@ The config command generates launchers in:
 - project root: `Enable Custom Resolution.bat`
 - project root: `Restore Native Resolution.bat`
 
+## Config window improvements
+
+The `config` window includes quality-of-life upgrades:
+
+- numeric resolution controls (no manual number parsing errors)
+- preset picker (current/native/common stretched values)
+- one-click **Use current display**
+- live aspect-ratio and size-vs-native preview
+- clearer progress/status text while saving
+
+## Performance and reliability updates
+
+- `NV_Modes.ps1` now targets the display adapter class keys directly instead of recursively scanning the full registry class tree.
+- External tool calls now validate process exit codes, so launcher/UI flows fail fast with a clear error when something goes wrong.
+
 ## Suggested stretched resolutions (common for 1440p)
 
 - `2100 x 1440`

@@ -21,34 +21,64 @@ $cfg = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 $gameRes = "$($cfg.game.width)x$($cfg.game.height)"
 $newEntry = "${gameRes}x8,16,32,64=1F;"
 
-$found = $false
-
-Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Control\Class" -Recurse -ErrorAction SilentlyContinue |
-ForEach-Object {
-    try {
-        $prop = Get-ItemProperty $_.PSPath -Name "NV_Modes" -ErrorAction Stop
-        $current = $prop.NV_Modes
-        # Handle string array (registry REG_MULTI_SZ)
-        if ($current -is [array]) { $current = $current -join "" }
-
-        $found = $true
-
-        # Check if this resolution already exists in the mode string
-        if ($current -match [regex]::Escape("${gameRes}x")) {
-            Write-Host "Already present in: $($_.PSPath)"
-            return
-        }
-
-        # Append before the trailing entries, or at the end of the string
-        $updated = $current.TrimEnd() + " $newEntry"
-        Set-ItemProperty -Path $_.PSPath -Name "NV_Modes" -Value @($updated)
-        Write-Host "Appended ${gameRes} to: $($_.PSPath)"
-    } catch {}
-}
-
-if (-not $found) {
-    Write-Warning "No NV_Modes registry keys found. Is an NVIDIA driver installed?"
+$displayClassGuid = '{4d36e968-e325-11ce-bfc1-08002be10318}'
+$displayClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$displayClassGuid"
+if (-not (Test-Path -Path $displayClassPath)) {
+    Write-Warning "Display adapter class key not found: $displayClassPath"
     exit 1
 }
 
-Write-Host "NV_Modes check complete for: $gameRes"
+$adapterKeys = @(
+    Get-ChildItem -Path $displayClassPath -ErrorAction SilentlyContinue |
+    Where-Object { $_.PSChildName -match '^\d{4}$' }
+)
+
+if ($adapterKeys.Count -eq 0) {
+    Write-Warning "No display adapter entries found under: $displayClassPath"
+    exit 1
+}
+
+$keysWithNVMode = 0
+$updatedCount = 0
+$alreadyPresentCount = 0
+
+foreach ($adapterKey in $adapterKeys) {
+    try {
+        $prop = Get-ItemProperty -Path $adapterKey.PSPath -Name 'NV_Modes' -ErrorAction Stop
+    }
+    catch {
+        continue
+    }
+
+    $keysWithNVMode++
+    $current = $prop.NV_Modes
+    # Handle string array (registry REG_MULTI_SZ)
+    if ($current -is [array]) {
+        $current = $current -join ''
+    }
+
+    if ([string]::IsNullOrWhiteSpace($current)) {
+        $updated = $newEntry
+    }
+    else {
+        if ($current -match [regex]::Escape("${gameRes}x")) {
+            $alreadyPresentCount++
+            Write-Host "Already present in: $($adapterKey.PSPath)"
+            continue
+        }
+
+        # Append before the trailing entries, or at the end of the string
+        $updated = ($current.TrimEnd() + " $newEntry").Trim()
+    }
+
+    Set-ItemProperty -Path $adapterKey.PSPath -Name 'NV_Modes' -Value @($updated)
+    $updatedCount++
+    Write-Host "Appended ${gameRes} to: $($adapterKey.PSPath)"
+}
+
+if ($keysWithNVMode -eq 0) {
+    Write-Warning "No NV_Modes registry values found under display adapter keys. Is an NVIDIA driver installed?"
+    exit 1
+}
+
+Write-Host "NV_Modes check complete for: $gameRes (updated: $updatedCount, unchanged: $alreadyPresentCount)"
