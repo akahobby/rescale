@@ -31,6 +31,18 @@ $Paths = @{
     NVScript = Join-Path $ScriptDir 'NV_Modes.ps1'
 }
 
+$script:WinFormsLoaded = $false
+
+function Import-WinFormsAssemblies {
+    if ($script:WinFormsLoaded) {
+        return
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $script:WinFormsLoaded = $true
+}
+
 function Assert-PathExists {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -79,10 +91,80 @@ function Write-Config {
     $Config | ConvertTo-Json -Depth 4 | Set-Content -Path $Paths.Config -Encoding UTF8
 }
 
+function Invoke-ExternalProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$ArgumentList,
+        [Parameter(Mandatory = $true)][string]$OperationName,
+        [switch]$RunAsAdministrator
+    )
+
+    $startParams = @{
+        FilePath     = $FilePath
+        ArgumentList = $ArgumentList
+        Wait         = $true
+        PassThru     = $true
+        ErrorAction  = 'Stop'
+    }
+
+    if ($RunAsAdministrator) {
+        $startParams.Verb = 'RunAs'
+    }
+    else {
+        $startParams.NoNewWindow = $true
+    }
+
+    $process = Start-Process @startParams
+    if ($process.ExitCode -ne 0) {
+        throw "$OperationName failed with exit code $($process.ExitCode)."
+    }
+}
+
 function Get-CurrentResolution {
-    Add-Type -AssemblyName System.Windows.Forms
+    Import-WinFormsAssemblies
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     return @{ Width = $bounds.Width; Height = $bounds.Height }
+}
+
+function Get-GreatestCommonDivisor {
+    param(
+        [Parameter(Mandatory = $true)][int]$A,
+        [Parameter(Mandatory = $true)][int]$B
+    )
+
+    $x = [Math]::Abs($A)
+    $y = [Math]::Abs($B)
+
+    while ($y -ne 0) {
+        $tmp = $y
+        $y = $x % $y
+        $x = $tmp
+    }
+
+    if ($x -eq 0) {
+        return 1
+    }
+
+    return $x
+}
+
+function Get-ResolutionSummaryText {
+    param(
+        [Parameter(Mandatory = $true)][int]$Width,
+        [Parameter(Mandatory = $true)][int]$Height,
+        [Parameter(Mandatory = $true)][int]$NativeWidth,
+        [Parameter(Mandatory = $true)][int]$NativeHeight
+    )
+
+    $gcd = Get-GreatestCommonDivisor -A $Width -B $Height
+    $ratioW = [int]($Width / $gcd)
+    $ratioH = [int]($Height / $gcd)
+    $ratioDecimal = [Math]::Round(($Width / [double]$Height), 3)
+
+    $widthPercent = [Math]::Round(($Width / [double]$NativeWidth) * 100, 1)
+    $heightPercent = [Math]::Round(($Height / [double]$NativeHeight) * 100, 1)
+
+    return "Aspect ratio: ${ratioW}:${ratioH} ($ratioDecimal)   |   Size vs native: ${widthPercent}% width, ${heightPercent}% height"
 }
 
 function Set-DisplayResolution {
@@ -94,7 +176,7 @@ function Set-DisplayResolution {
 
     Assert-PathExists -Path $Paths.NirCmd -Label 'nircmd.exe'
     Write-Host "Changing resolution to ${Width}x${Height} (${BitDepth}-bit)"
-    Start-Process -FilePath $Paths.NirCmd -ArgumentList "setdisplay $Width $Height $BitDepth" -Wait -NoNewWindow
+    Invoke-ExternalProcess -FilePath $Paths.NirCmd -ArgumentList "setdisplay $Width $Height $BitDepth" -OperationName 'Display resolution update'
 }
 
 function Test-IsAdmin {
@@ -103,40 +185,31 @@ function Test-IsAdmin {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Restart-Elevated {
-    param([Parameter(Mandatory = $true)][string]$ScriptArgs)
-
-    $powerShellExe = (Get-Process -Id $PID).Path
-    Start-Process -FilePath $powerShellExe -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.ScriptName)`" $ScriptArgs" -WindowStyle Hidden
-    exit
-}
-
 function Invoke-NVModesWithElevation {
     Assert-PathExists -Path $Paths.NVScript -Label 'NV_Modes script'
 
+    $powerShellExe = (Get-Process -Id $PID).Path
+    $argumentList = "-NoProfile -ExecutionPolicy Bypass -File `"$($Paths.NVScript)`""
+
     if (-not (Test-IsAdmin)) {
-        $powerShellExe = (Get-Process -Id $PID).Path
-        Start-Process -FilePath $powerShellExe -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$($Paths.NVScript)`"" -Wait
+        Invoke-ExternalProcess -FilePath $powerShellExe -ArgumentList $argumentList -OperationName 'NV_Modes update' -RunAsAdministrator
         return
     }
 
-    & $Paths.NVScript
+    Invoke-ExternalProcess -FilePath $powerShellExe -ArgumentList $argumentList -OperationName 'NV_Modes update'
 }
 
 function Invoke-NvidiaFix {
-    if (-not (Test-IsAdmin)) {
-        Restart-Elevated -ScriptArgs 'fix-nvidia'
-        return
-    }
-
-    Assert-PathExists -Path $Paths.NVScript -Label 'NV_Modes script'
-    & $Paths.NVScript
+    Invoke-NVModesWithElevation
 }
 
 function Set-ProfileResolution {
-    param([Parameter(Mandatory = $true)][ValidateSet('game', 'native')][string]$ProfileName)
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('game', 'native')][string]$ProfileName,
+        [psobject]$Config
+    )
 
-    $cfg = Read-Config
+    $cfg = if ($PSBoundParameters.ContainsKey('Config')) { $Config } else { Read-Config }
     Set-DisplayResolution -Width $cfg.$ProfileName.width -Height $cfg.$ProfileName.height -BitDepth $cfg.bitDepth
 }
 
@@ -164,7 +237,7 @@ function Set-SecondaryDisplays {
 
     Assert-PathExists -Path $Paths.NirCmd -Label 'nircmd.exe'
     foreach ($displayId in $DisplayIds) {
-        Start-Process -FilePath $Paths.NirCmd -ArgumentList "setdisplay monitor:$displayId 0 0 0" -Wait -NoNewWindow
+        Invoke-ExternalProcess -FilePath $Paths.NirCmd -ArgumentList "setdisplay monitor:$displayId 0 0 0" -OperationName "Secondary display toggle (monitor:$displayId)"
     }
 }
 
@@ -207,72 +280,184 @@ function New-LauncherFiles {
 }
 
 function Show-ConfigWindow {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-
+    Import-WinFormsAssemblies
     $cfg = Read-Config
+    $current = Get-CurrentResolution
+    $nativeWidth = [int]$cfg.native.width
+    $nativeHeight = [int]$cfg.native.height
+    $initialWidth = [Math]::Min(16384, [Math]::Max(640, [int]$cfg.game.width))
+    $initialHeight = [Math]::Min(16384, [Math]::Max(480, [int]$cfg.game.height))
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'ResolutionTool Config'
-    $form.Size = New-Object System.Drawing.Size(340, 220)
+    $form.Size = New-Object System.Drawing.Size(520, 360)
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+
+    $lblHeader = New-Object System.Windows.Forms.Label
+    $lblHeader.Text = 'Game Resolution Setup'
+    $lblHeader.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
+    $lblHeader.Location = New-Object System.Drawing.Point(18, 12)
+    $lblHeader.Size = New-Object System.Drawing.Size(320, 26)
+    $form.Controls.Add($lblHeader)
+
+    $lblContext = New-Object System.Windows.Forms.Label
+    $lblContext.Text = "Current display: $($current.Width)x$($current.Height)   |   Native profile: ${nativeWidth}x${nativeHeight}"
+    $lblContext.Location = New-Object System.Drawing.Point(20, 38)
+    $lblContext.Size = New-Object System.Drawing.Size(470, 20)
+    $form.Controls.Add($lblContext)
+
+    $group = New-Object System.Windows.Forms.GroupBox
+    $group.Text = 'Target game resolution'
+    $group.Location = New-Object System.Drawing.Point(20, 64)
+    $group.Size = New-Object System.Drawing.Size(470, 175)
+    $form.Controls.Add($group)
+
+    $lblPreset = New-Object System.Windows.Forms.Label
+    $lblPreset.Text = 'Preset:'
+    $lblPreset.Location = New-Object System.Drawing.Point(16, 30)
+    $lblPreset.Size = New-Object System.Drawing.Size(80, 22)
+    $group.Controls.Add($lblPreset)
+
+    $cmbPreset = New-Object System.Windows.Forms.ComboBox
+    $cmbPreset.DropDownStyle = 'DropDownList'
+    $cmbPreset.Location = New-Object System.Drawing.Point(110, 27)
+    $cmbPreset.Size = New-Object System.Drawing.Size(340, 24)
+    $group.Controls.Add($cmbPreset)
 
     $lblWidth = New-Object System.Windows.Forms.Label
-    $lblWidth.Text = 'Game resolution width:'
-    $lblWidth.Location = New-Object System.Drawing.Point(20, 20)
-    $lblWidth.Size = New-Object System.Drawing.Size(160, 20)
-    $form.Controls.Add($lblWidth)
+    $lblWidth.Text = 'Width:'
+    $lblWidth.Location = New-Object System.Drawing.Point(16, 67)
+    $lblWidth.Size = New-Object System.Drawing.Size(80, 22)
+    $group.Controls.Add($lblWidth)
 
-    $txtWidth = New-Object System.Windows.Forms.TextBox
-    $txtWidth.Text = "$($cfg.game.width)"
-    $txtWidth.Location = New-Object System.Drawing.Point(190, 18)
-    $txtWidth.Size = New-Object System.Drawing.Size(120, 20)
-    $form.Controls.Add($txtWidth)
+    $numWidth = New-Object System.Windows.Forms.NumericUpDown
+    $numWidth.Minimum = [decimal]640
+    $numWidth.Maximum = [decimal]16384
+    $numWidth.Increment = [decimal]2
+    $numWidth.ThousandsSeparator = $true
+    $numWidth.Location = New-Object System.Drawing.Point(110, 64)
+    $numWidth.Size = New-Object System.Drawing.Size(140, 24)
+    $numWidth.Value = [decimal]$initialWidth
+    $group.Controls.Add($numWidth)
 
     $lblHeight = New-Object System.Windows.Forms.Label
-    $lblHeight.Text = 'Game resolution height:'
-    $lblHeight.Location = New-Object System.Drawing.Point(20, 55)
-    $lblHeight.Size = New-Object System.Drawing.Size(160, 20)
-    $form.Controls.Add($lblHeight)
+    $lblHeight.Text = 'Height:'
+    $lblHeight.Location = New-Object System.Drawing.Point(16, 102)
+    $lblHeight.Size = New-Object System.Drawing.Size(80, 22)
+    $group.Controls.Add($lblHeight)
 
-    $txtHeight = New-Object System.Windows.Forms.TextBox
-    $txtHeight.Text = "$($cfg.game.height)"
-    $txtHeight.Location = New-Object System.Drawing.Point(190, 53)
-    $txtHeight.Size = New-Object System.Drawing.Size(120, 20)
-    $form.Controls.Add($txtHeight)
+    $numHeight = New-Object System.Windows.Forms.NumericUpDown
+    $numHeight.Minimum = [decimal]480
+    $numHeight.Maximum = [decimal]16384
+    $numHeight.Increment = [decimal]2
+    $numHeight.ThousandsSeparator = $true
+    $numHeight.Location = New-Object System.Drawing.Point(110, 99)
+    $numHeight.Size = New-Object System.Drawing.Size(140, 24)
+    $numHeight.Value = [decimal]$initialHeight
+    $group.Controls.Add($numHeight)
 
-    $btnSave = New-Object System.Windows.Forms.Button
-    $btnSave.Text = 'Save and apply'
-    $btnSave.Size = New-Object System.Drawing.Size(290, 35)
-    $btnSave.Location = New-Object System.Drawing.Point(20, 95)
-    $form.Controls.Add($btnSave)
-    $form.AcceptButton = $btnSave
+    $btnUseCurrent = New-Object System.Windows.Forms.Button
+    $btnUseCurrent.Text = 'Use current display'
+    $btnUseCurrent.Location = New-Object System.Drawing.Point(270, 81)
+    $btnUseCurrent.Size = New-Object System.Drawing.Size(180, 30)
+    $group.Controls.Add($btnUseCurrent)
+
+    $lblSummary = New-Object System.Windows.Forms.Label
+    $lblSummary.Location = New-Object System.Drawing.Point(16, 136)
+    $lblSummary.Size = New-Object System.Drawing.Size(434, 30)
+    $lblSummary.Text = Get-ResolutionSummaryText -Width $initialWidth -Height $initialHeight -NativeWidth $nativeWidth -NativeHeight $nativeHeight
+    $group.Controls.Add($lblSummary)
 
     $lblNote = New-Object System.Windows.Forms.Label
     $lblNote.Text = 'Tip: Restart Windows once after the first NV_Modes update.'
-    $lblNote.Location = New-Object System.Drawing.Point(20, 140)
-    $lblNote.Size = New-Object System.Drawing.Size(300, 30)
+    $lblNote.Location = New-Object System.Drawing.Point(20, 246)
+    $lblNote.Size = New-Object System.Drawing.Size(470, 20)
     $form.Controls.Add($lblNote)
 
-    $btnSave.Add_Click({
-        $w = $txtWidth.Text.Trim()
-        $h = $txtHeight.Text.Trim()
+    $lblStatus = New-Object System.Windows.Forms.Label
+    $lblStatus.Text = 'Ready.'
+    $lblStatus.Location = New-Object System.Drawing.Point(20, 268)
+    $lblStatus.Size = New-Object System.Drawing.Size(470, 20)
+    $form.Controls.Add($lblStatus)
 
-        if ($w -notmatch '^\d+$' -or $h -notmatch '^\d+$') {
-            [System.Windows.Forms.MessageBox]::Show(
-                'Width and height must be whole numbers.',
-                'Validation error',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            )
+    $btnSave = New-Object System.Windows.Forms.Button
+    $btnSave.Text = 'Save and apply'
+    $btnSave.Size = New-Object System.Drawing.Size(220, 36)
+    $btnSave.Location = New-Object System.Drawing.Point(20, 292)
+    $form.Controls.Add($btnSave)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = 'Cancel'
+    $btnCancel.Size = New-Object System.Drawing.Size(120, 36)
+    $btnCancel.Location = New-Object System.Drawing.Point(370, 292)
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($btnCancel)
+
+    $form.AcceptButton = $btnSave
+    $form.CancelButton = $btnCancel
+
+    $presetEntries = @()
+    $presetCandidates = @(
+        @{ Label = 'Current display'; Width = $current.Width; Height = $current.Height },
+        @{ Label = 'Native profile'; Width = $nativeWidth; Height = $nativeHeight },
+        @{ Label = 'Common stretched'; Width = 2100; Height = 1440 },
+        @{ Label = 'Common stretched'; Width = 1566; Height = 1080 },
+        @{ Label = 'Common stretched'; Width = 1280; Height = 880 },
+        @{ Label = 'Full HD baseline'; Width = 1920; Height = 1080 }
+    )
+    $seenResolutions = @{}
+    foreach ($candidate in $presetCandidates) {
+        $resolutionKey = "{0}x{1}" -f [int]$candidate.Width, [int]$candidate.Height
+        if ($seenResolutions.ContainsKey($resolutionKey)) {
+            continue
+        }
+
+        $seenResolutions[$resolutionKey] = $true
+        $entry = [pscustomobject]@{
+            Label  = $candidate.Label
+            Width  = [int]$candidate.Width
+            Height = [int]$candidate.Height
+        }
+        $presetEntries += $entry
+        [void]$cmbPreset.Items.Add("{0} ({1}x{2})" -f $entry.Label, $entry.Width, $entry.Height)
+    }
+
+    $updateSummary = {
+        $lblSummary.Text = Get-ResolutionSummaryText -Width ([int]$numWidth.Value) -Height ([int]$numHeight.Value) -NativeWidth $nativeWidth -NativeHeight $nativeHeight
+    }
+
+    $numWidth.Add_ValueChanged($updateSummary)
+    $numHeight.Add_ValueChanged($updateSummary)
+
+    $cmbPreset.Add_SelectedIndexChanged({
+        if ($cmbPreset.SelectedIndex -lt 0) {
             return
         }
 
+        $selected = $presetEntries[$cmbPreset.SelectedIndex]
+        $numWidth.Value = [decimal]$selected.Width
+        $numHeight.Value = [decimal]$selected.Height
+    })
+
+    $btnUseCurrent.Add_Click({
+        $liveResolution = Get-CurrentResolution
+        $numWidth.Value = [decimal]([Math]::Min(16384, [Math]::Max(640, [int]$liveResolution.Width)))
+        $numHeight.Value = [decimal]([Math]::Min(16384, [Math]::Max(480, [int]$liveResolution.Height)))
+        $cmbPreset.SelectedIndex = -1
+    })
+
+    $btnSave.Add_Click({
+        $btnSave.Enabled = $false
+        $form.UseWaitCursor = $true
+        $lblStatus.Text = 'Applying NV_Modes and generating launchers...'
+
         try {
-            $cfg.game.width = [int]$w
-            $cfg.game.height = [int]$h
+            $cfg.game.width = [int]$numWidth.Value
+            $cfg.game.height = [int]$numHeight.Value
             Write-Config -Config $cfg
 
             Invoke-NVModesWithElevation
@@ -294,6 +479,11 @@ function Show-ConfigWindow {
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Error
             )
+        }
+        finally {
+            $btnSave.Enabled = $true
+            $form.UseWaitCursor = $false
+            $lblStatus.Text = 'Ready.'
         }
     })
 
@@ -340,12 +530,12 @@ try {
         'gaming-mode' {
             $cfg = Read-Config
             Set-SecondaryDisplays -DisplayIds (Get-SecondaryDisplayIds -Config $cfg)
-            Set-ProfileResolution -ProfileName 'game'
+            Set-ProfileResolution -ProfileName 'game' -Config $cfg
         }
         'normal-mode' {
             $cfg = Read-Config
             Set-SecondaryDisplays -DisplayIds (Get-SecondaryDisplayIds -Config $cfg)
-            Set-ProfileResolution -ProfileName 'native'
+            Set-ProfileResolution -ProfileName 'native' -Config $cfg
         }
         'status' { Show-Status }
         'config' { Show-ConfigWindow }
