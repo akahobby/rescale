@@ -411,7 +411,7 @@ function Show-ConfigWindow {
     )
     $seenResolutions = @{}
     foreach ($candidate in $presetCandidates) {
-        $resolutionKey = "{0}x{1}" -f [int]$candidate.Width, [int]$candidate.Height
+        $resolutionKey = "$([int]$candidate.Width)x$([int]$candidate.Height)"
         if ($seenResolutions.ContainsKey($resolutionKey)) {
             continue
         }
@@ -423,7 +423,7 @@ function Show-ConfigWindow {
             Height = [int]$candidate.Height
         }
         $presetEntries += $entry
-        [void]$cmbPreset.Items.Add("{0} ({1}x{2})" -f $entry.Label, $entry.Width, $entry.Height)
+        [void]$cmbPreset.Items.Add("$($entry.Label) ($($entry.Width)x$($entry.Height))")
     }
 
     $updateSummary = {
@@ -500,10 +500,10 @@ function Show-Status {
     $res = Get-CurrentResolution
     $cfg = Read-Config
 
-    Write-Host ("Current   : {0}x{1}" -f $res.Width, $res.Height)
-    Write-Host ("Native    : {0}x{1}" -f $cfg.native.width, $cfg.native.height)
-    Write-Host ("Game      : {0}x{1}" -f $cfg.game.width, $cfg.game.height)
-    Write-Host ("Bit depth : {0}" -f $cfg.bitDepth)
+    Write-Host "Current   : $($res.Width)x$($res.Height)"
+    Write-Host "Native    : $($cfg.native.width)x$($cfg.native.height)"
+    Write-Host "Game      : $($cfg.game.width)x$($cfg.game.height)"
+    Write-Host "Bit depth : $($cfg.bitDepth)"
 }
 
 function Show-Help {
