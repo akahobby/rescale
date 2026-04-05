@@ -20,6 +20,7 @@ $ScriptDir = Split-Path -Parent $PSCommandPath
 if (-not $ScriptDir) { $ScriptDir = $PWD.Path }
 $RescaleScriptPath = $PSCommandPath
 if (-not $RescaleScriptPath) { $RescaleScriptPath = Join-Path $ScriptDir 'rescale.ps1' }
+$script:RescaleUpstreamUrl = 'https://raw.githubusercontent.com/akahobby/rescale/main/rescale.ps1'
 $ConfigPath = Join-Path $ScriptDir 'rescale.config.json'
 $GameBat = Join-Path $ScriptDir 'Switch to Game Resolution.bat'
 $DesktopBat = Join-Path $ScriptDir 'Switch to Desktop Resolution.bat'
@@ -135,18 +136,42 @@ function Save-RescaleConfig {
 }
 
 function Write-SwitchBatchFiles {
-    param([string]$Ps1Path)
+    $u = $script:RescaleUpstreamUrl
     $gameBody = @"
 @echo off
+pushd "%~dp0"
+if not exist "rescale.ps1" (
+  echo Downloading rescale.ps1...
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '$u' -OutFile '.\rescale.ps1' -UseBasicParsing"
+  if errorlevel 1 (
+    echo Download failed.
+    popd
+    pause
+    exit /b 1
+  )
+)
 title Game resolution
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$Ps1Path" -Game
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0rescale.ps1" -Game
 if errorlevel 1 pause
+popd
 "@
     $deskBody = @"
 @echo off
+pushd "%~dp0"
+if not exist "rescale.ps1" (
+  echo Downloading rescale.ps1...
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '$u' -OutFile '.\rescale.ps1' -UseBasicParsing"
+  if errorlevel 1 (
+    echo Download failed.
+    popd
+    pause
+    exit /b 1
+  )
+)
 title Desktop resolution
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$Ps1Path" -Desktop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0rescale.ps1" -Desktop
 if errorlevel 1 pause
+popd
 "@
     Set-Content -LiteralPath $GameBat -Value $gameBody -Encoding ASCII
     Set-Content -LiteralPath $DesktopBat -Value $deskBody -Encoding ASCII
@@ -379,7 +404,7 @@ $btnSave.Add_Click({
     $gw = [int]$numGameW.Value
     $gh = [int]$numGameH.Value
     Save-RescaleConfig -NativeWidth $script:nativeW -NativeHeight $script:nativeH -GameWidth $gw -GameHeight $gh
-    Write-SwitchBatchFiles -Ps1Path $RescaleScriptPath
+    Write-SwitchBatchFiles
     [System.Windows.Forms.MessageBox]::Show(
         "Saved.`n`nCreated:`n  Switch to Game Resolution.bat`n  Switch to Desktop Resolution.bat",
         'Rescale',

@@ -8,8 +8,8 @@ Uses the Win32 display APIs (`ChangeDisplaySettingsEx`). The mode must already b
 
 | File | Purpose |
 |------|---------|
-| `rescale.ps1` | Main script: configuration UI, `-Game`, `-Desktop` |
-| `rescale.bat` | Opens the setup window |
+| `rescale.ps1` | Main script: configuration UI, `-Game`, `-Desktop` (downloaded automatically if missing) |
+| `rescale.bat` | All you need to start: fetches `rescale.ps1` from this repo when absent, then runs it |
 
 After you save settings in the UI, the script creates:
 
@@ -20,8 +20,8 @@ After you save settings in the UI, the script creates:
 
 ## First run
 
-1. Clone or download this folder.
-2. Double-click `rescale.bat` (or run `rescale.ps1` with no arguments).
+1. Keep only `rescale.bat` (or clone the whole repo).
+2. Double-click it. The first run downloads `rescale.ps1` from GitHub into the same folder if it is missing.
 3. Capture your desktop resolution, set the game size (presets available), then **Save config and create .bat files**.
 
 ## Command line
