@@ -1,37 +1,34 @@
-# Rescale
+# Rescale — native Windows app (Rust)
 
-Small Windows utility to switch the **primary** display between a saved desktop resolution and a custom game resolution (for example stretched modes).
+Rescale is a lightweight Windows resolution switcher for stretched gaming resolutions. The GUI and display switching are implemented in native Rust/Win32: **no PowerShell, Electron, webview, .NET or runtime downloads**.
 
-Uses the Win32 display APIs (`ChangeDisplaySettingsEx`). The mode must already be exposed by your GPU driver (NVIDIA Control Panel custom resolutions, CRU, etc.).
+## Features
+- Read the **primary** display mode and capture it as the desktop resolution.
+- Set custom game width and height, or choose one of the original eight presets.
+- Save `rescale.config.json` in the executable folder (compatible with the original script's JSON keys).
+- Test a game/desktop switch immediately.
+- Create `Switch to Game Resolution.bat` and `Switch to Desktop Resolution.bat` shortcuts when saving.
+- Run `rescale.exe --game`, `rescale.exe --desktop`, or `rescale.exe --configure` (also accepts `-Game` and `-Desktop`).
 
-## Files
+## Build on Windows
+Install Rust via https://rustup.rs/ and run:
 
-| File | Purpose |
-|------|---------|
-| `rescale.ps1` | Main script: configuration UI, `-Game`, `-Desktop` (downloaded automatically if missing) |
-| `rescale.bat` | All you need to start: fetches `rescale.ps1` from this repo when absent, then runs it |
-
-After you save settings in the UI, the script creates:
-
-- `Switch to Game Resolution.bat`
-- `Switch to Desktop Resolution.bat`
-
-(Those generated files are ignored by git.)
-
-## First run
-
-1. Keep only `rescale.bat` (or clone the whole repo).
-2. Double-click it. The first run downloads `rescale.ps1` from GitHub into the same folder if it is missing.
-3. Capture your desktop resolution, set the game size (presets available), then **Save config and create .bat files**.
-
-## Command line
-
-```bat
-powershell -NoProfile -ExecutionPolicy Bypass -File .\rescale.ps1 -Game
-powershell -NoProfile -ExecutionPolicy Bypass -File .\rescale.ps1 -Desktop
-powershell -NoProfile -ExecutionPolicy Bypass -File .\rescale.ps1 -Configure
+```powershell
+cargo build --release
 ```
 
-## License
+Your app is `target\release\rescale.exe`. Or use the **Build Windows app** GitHub Action and download its artifact.
 
-MIT. See [LICENSE](LICENSE).
+## Usage
+1. Open `rescale.exe`.
+2. Capture your desktop resolution (automatically populated the first time).
+3. Enter a game resolution or select a preset.
+4. Save settings and shortcuts.
+5. Double-click either shortcut or use the GUI buttons to switch.
+
+**Important:** A custom resolution must already exist in your graphics driver (NVIDIA Control Panel / CRU). The app preserves the current refresh rate and color depth, matching the original PowerShell behavior. If a mode fails, create it in your driver first. Changes affect the primary display only.
+
+**Portable configuration:** Keep `rescale.exe` in a writable directory (not `Program Files`) so the configuration and shortcut files can be saved next to it. On the first run, you can copy an existing `rescale.config.json` beside the EXE.
+
+## Branding / dark theme
+The Windows interface uses a charcoal palette, blue accent button, dark title bar and custom-drawn buttons. The Rescale logo is in `assets/rescale-logo.png`; the Windows executable icon is embedded from `assets/rescale.ico` at build time. The `embed-resource` build dependency requires an initial crates.io download.
